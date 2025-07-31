@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 config = dotenv_values(".env")
 
 # Инициализация бота
-bot = Bot(token=config['BOT_TOKEN'])
+bot = Bot(token='8185292156:AAFuBcRVGiZDYBI7XdEcYnc5raGS8hjUFJA')
 dp = Dispatcher()
 
 # Константы для пагинации
@@ -175,10 +175,10 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
         await state.set_state(WarrantyStates.edit_date)
     elif field == "duration":
         builder = InlineKeyboardBuilder()
-        builder.button(text="Дни", callback_data="edit_unit_days")
-        builder.button(text="Недели", callback_data="edit_unit_weeks")
-        builder.button(text="Месяцы", callback_data="edit_unit_months")
-        builder.button(text="Годы", callback_data="edit_unit_years")
+        builder.button(text="Дни", callback_data="unit_edit_days")
+        builder.button(text="Недели", callback_data="unit_edit_weeks")
+        builder.button(text="Месяцы", callback_data="unit_edit_months")
+        builder.button(text="Годы", callback_data="unit_edit_years")
         builder.adjust(2)
         await callback.message.edit_text(
             "Выберите единицу измерения срока годности:",
@@ -188,7 +188,7 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
     
     await callback.answer()
 
-@dp.callback_query(WarrantyStates.edit_duration_unit, F.data.startswith("edit_unit_"))
+@dp.callback_query(WarrantyStates.edit_duration_unit, F.data.startswith("unit_edit_"))
 async def process_edit_duration_unit(callback: CallbackQuery, state: FSMContext):
     unit = callback.data.split("_")[2]
     await state.update_data(duration_unit=unit)
@@ -274,7 +274,12 @@ async def process_edit_duration(message: Message, state: FSMContext):
 async def cmd_list(message: Message):
     await show_warranties(message, page=1)
 
-async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_mode: bool = False, delete_mode: bool = False):
+async def show_warranties(
+    message: Message | CallbackQuery,
+    page: int = 1,
+    edit_mode: bool = False,
+    delete_mode: bool = False
+):
     user_id = message.from_user.id if isinstance(message, Message) else message.message.chat.id
     today = datetime.now().date()
     
@@ -293,7 +298,7 @@ async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_
             await message.message.edit_text(text)
         return
     
-    # Пагинация
+    # Pagination logic
     total_items = len(warranties)
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     start_idx = (page - 1) * ITEMS_PER_PAGE
@@ -315,27 +320,32 @@ async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_
     
     builder = InlineKeyboardBuilder()
     
-    if delete_mode:
-        for warranty in warranties[start_idx:end_idx]:
-            id_, brand, start_date, duration = warranty
-            builder.button(
-                text=f"🗑️ {brand}",
-                callback_data=f"confirm_delete_{id_}"
-            )
-    elif edit_mode:
-        for warranty in warranties[start_idx:end_idx]:
-            id_, brand, start_date, duration = warranty
-            end_date = datetime.strptime(start_date, "%Y-%m-%d").date() + timedelta(days=duration)
-            days_left = (end_date - today).days
-            phrase = f"✅" if days_left >= 0 else f"❌"
-            builder.button(text=f"✏️ {phrase} {brand} ({start_date} - {end_date})", callback_data=f"edit_{id_}")
+    # Add item-specific buttons (Edit/Delete)
+    for warranty in warranties[start_idx:end_idx]:
+        id_, brand, start_date, duration = warranty
+        if delete_mode:
+            builder.button(text=f"🗑️ {brand}", callback_data=f"confirm_delete_{id_}")
+        elif edit_mode:
+            builder.button(text=f"✏️ {brand}", callback_data=f"edit_{id_}")
+    
+    # Add pagination controls for Edit/Delete modes
+    if edit_mode or delete_mode:
+        if page > 1:
+            builder.button(text="⬅️ Назад", callback_data=f"{'new_edit' if edit_mode else 'new_delete'}_page_{page-1}")
+        if page < total_pages:
+            builder.button(text="Вперед ➡️", callback_data=f"{'new_edit' if edit_mode else 'new_delete'}_page_{page+1}")
     else:
+        # Normal list mode pagination
         if page > 1:
             builder.button(text="⬅️ Назад", callback_data=f"page_{page-1}")
         if page < total_pages:
             builder.button(text="Вперед ➡️", callback_data=f"page_{page+1}")
     
-    builder.adjust(1)
+    # Add cancel button for Edit/Delete modes
+    if edit_mode or delete_mode:
+        builder.button(text="❌ Отмена", callback_data="cancel_operation")
+    
+    builder.adjust(1)  # Adjust button layout
     
     if isinstance(message, Message):
         await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
@@ -346,6 +356,23 @@ async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_
 async def process_page(callback: CallbackQuery):
     page = int(callback.data.split("_")[1])
     await show_warranties(callback, page=page)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("new_edit_page_"))
+async def edit_page_callback(callback: CallbackQuery):
+    page = int(callback.data.split("_")[3])
+    await show_warranties(callback, page=page, edit_mode=True)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("new_delete_page_"))
+async def delete_page_callback(callback: CallbackQuery):
+    page = int(callback.data.split("_")[3])
+    await show_warranties(callback, page=page, delete_mode=True)
+    await callback.answer()
+
+@dp.callback_query(F.data == "cancel_operation")
+async def cancel_operation(callback: CallbackQuery):
+    await callback.message.edit_text("❌ Операция отменена")
     await callback.answer()
 
 # Удаление гарантии
