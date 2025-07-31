@@ -17,20 +17,24 @@ logger = logging.getLogger(__name__)
 # Получение токена из окружения
 config = dotenv_values(".env")
 
-
 # Инициализация бота
 bot = Bot(token=config['BOT_TOKEN'])
 dp = Dispatcher()
+
+# Константы для пагинации
+ITEMS_PER_PAGE = 5
 
 # Состояния FSM
 class WarrantyStates(StatesGroup):
     enter_brand = State()
     enter_start_date = State()
     enter_duration = State()
+    enter_duration_unit = State()
     edit_choice = State()
     edit_brand = State()
     edit_date = State()
     edit_duration = State()
+    edit_duration_unit = State()
 
 # Инициализация БД
 def init_db():
@@ -75,63 +79,69 @@ async def process_date(message: Message, state: FSMContext):
     try:
         datetime.strptime(message.text, "%Y-%m-%d")
         await state.update_data(start_date=message.text)
-        await message.answer("Введите срок годности после вскрытия в днях:")
-        await state.set_state(WarrantyStates.enter_duration)
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="Дни", callback_data="unit_days")
+        builder.button(text="Недели", callback_data="unit_weeks")
+        builder.button(text="Месяцы", callback_data="unit_months")
+        builder.button(text="Годы", callback_data="unit_years")
+        builder.adjust(2)
+        
+        await message.answer(
+            "Выберите единицу измерения срока годности:",
+            reply_markup=builder.as_markup()
+        )
+        await state.set_state(WarrantyStates.enter_duration_unit)
     except ValueError:
         await message.answer("❌ Неверный формат даты. Используйте ГГГГ-ММ-ДД")
+
+@dp.callback_query(WarrantyStates.enter_duration_unit, F.data.startswith("unit_"))
+async def process_duration_unit(callback: CallbackQuery, state: FSMContext):
+    unit = callback.data.split("_")[1]
+    await state.update_data(duration_unit=unit)
+    await callback.message.edit_text(f"Введите срок годности в {unit}:")
+    await state.set_state(WarrantyStates.enter_duration)
+    await callback.answer()
 
 @dp.message(WarrantyStates.enter_duration)
 async def process_duration(message: Message, state: FSMContext):
     try:
-        duration = int(message.text)
+        duration = float(message.text)
         if duration <= 0:
             raise ValueError
             
         data = await state.get_data()
+        unit = data['duration_unit']
+        
+        # Конвертация в дни
+        if unit == "days":
+            duration_days = int(duration)
+        elif unit == "weeks":
+            duration_days = int(duration * 7)
+        elif unit == "months":
+            duration_days = int(duration * 30)  # Приблизительно
+        elif unit == "years":
+            duration_days = int(duration * 365)  # Приблизительно
+        
         user_id = message.from_user.id
         
         with sqlite3.connect('warranty.db') as conn:
             conn.execute(
                 "INSERT INTO warranties (user_id, brand, start_date, duration_days) VALUES (?, ?, ?, ?)",
-                (user_id, data['brand'], data['start_date'], duration)
+                (user_id, data['brand'], data['start_date'], duration_days)
             )
         
         await message.answer("✅ Гарантия успешно добавлена!")
         await state.clear()
-        await show_warranties(message)
+        await show_warranties(message, page=1)
         
     except ValueError:
-        await message.answer("❌ Введите целое положительное число")
+        await message.answer("❌ Введите положительное число")
 
 # --- Редактирование гарантии ---
 @dp.message(Command("edit"))
 async def cmd_edit(message: Message):
-    user_id = message.from_user.id
-    
-    with sqlite3.connect('warranty.db') as conn:
-        cursor = conn.execute(
-            "SELECT id, brand, start_date, duration_days FROM warranties WHERE user_id = ?",
-            (user_id,)
-        )
-        warranties = cursor.fetchall()
-    
-    if not warranties:
-        await message.answer("ℹ️ Нет наименований для редактирования")
-        return
-    
-    today = datetime.now().date()
-    builder = InlineKeyboardBuilder()
-    for id_, brand, start_date, duration in warranties:
-        end_date = datetime.strptime(start_date, "%Y-%m-%d").date() + timedelta(days=duration)
-        days_left = (end_date - today).days
-        phrase = f"✅" if days_left >= 0 else f"❌"
-        builder.button(text=f"✏️ {phrase} {brand} ({start_date} - {end_date})", callback_data=f"edit_{id_}")
-    
-    builder.adjust(1)
-    await message.answer(
-        "Выберите наименование для редактирования:",
-        reply_markup=builder.as_markup()
-    )
+    await show_warranties(message, page=1, edit_mode=True)
 
 @dp.callback_query(F.data.startswith("edit_"))
 async def select_edit_field(callback: CallbackQuery, state: FSMContext):
@@ -141,7 +151,7 @@ async def select_edit_field(callback: CallbackQuery, state: FSMContext):
     builder = InlineKeyboardBuilder()
     builder.button(text="Название", callback_data="field_brand")
     builder.button(text="Дата начала", callback_data="field_date")
-    builder.button(text="Срок (дни)", callback_data="field_duration")
+    builder.button(text="Срок годности", callback_data="field_duration")
     builder.button(text="❌ Отмена", callback_data="cancel_edit")
     builder.adjust(1)
     
@@ -164,9 +174,26 @@ async def select_field_to_edit(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("Введите новую дату начала (ГГГГ-ММ-ДД):")
         await state.set_state(WarrantyStates.edit_date)
     elif field == "duration":
-        await callback.message.edit_text("Введите новый срок годности в днях:")
-        await state.set_state(WarrantyStates.edit_duration)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="Дни", callback_data="edit_unit_days")
+        builder.button(text="Недели", callback_data="edit_unit_weeks")
+        builder.button(text="Месяцы", callback_data="edit_unit_months")
+        builder.button(text="Годы", callback_data="edit_unit_years")
+        builder.adjust(2)
+        await callback.message.edit_text(
+            "Выберите единицу измерения срока годности:",
+            reply_markup=builder.as_markup()
+        )
+        await state.set_state(WarrantyStates.edit_duration_unit)
     
+    await callback.answer()
+
+@dp.callback_query(WarrantyStates.edit_duration_unit, F.data.startswith("edit_unit_"))
+async def process_edit_duration_unit(callback: CallbackQuery, state: FSMContext):
+    unit = callback.data.split("_")[2]
+    await state.update_data(duration_unit=unit)
+    await callback.message.edit_text(f"Введите новый срок годности в {unit}:")
+    await state.set_state(WarrantyStates.edit_duration)
     await callback.answer()
 
 @dp.callback_query(WarrantyStates.edit_choice, F.data == "cancel_edit")
@@ -188,7 +215,7 @@ async def process_edit_brand(message: Message, state: FSMContext):
     
     await message.answer("✅ Название успешно обновлено!")
     await state.clear()
-    await show_warranties(message)
+    await show_warranties(message, page=1)
 
 @dp.message(WarrantyStates.edit_date)
 async def process_edit_date(message: Message, state: FSMContext):
@@ -205,39 +232,50 @@ async def process_edit_date(message: Message, state: FSMContext):
         
         await message.answer("✅ Дата начала успешно обновлена!")
         await state.clear()
-        await show_warranties(message)
+        await show_warranties(message, page=1)
     except ValueError:
         await message.answer("❌ Неверный формат даты. Используйте ГГГГ-ММ-ДД")
 
 @dp.message(WarrantyStates.edit_duration)
 async def process_edit_duration(message: Message, state: FSMContext):
     try:
-        duration = int(message.text)
+        duration = float(message.text)
         if duration <= 0:
             raise ValueError
             
         data = await state.get_data()
         warranty_id = data['warranty_id']
+        unit = data['duration_unit']
+        
+        # Конвертация в дни
+        if unit == "days":
+            duration_days = int(duration)
+        elif unit == "weeks":
+            duration_days = int(duration * 7)
+        elif unit == "months":
+            duration_days = int(duration * 30)  # Приблизительно
+        elif unit == "years":
+            duration_days = int(duration * 365)  # Приблизительно
         
         with sqlite3.connect('warranty.db') as conn:
             conn.execute(
                 "UPDATE warranties SET duration_days = ?, notified = FALSE WHERE id = ?",
-                (duration, warranty_id)
+                (duration_days, warranty_id)
             )
         
         await message.answer("✅ Срок годности успешно обновлен!")
         await state.clear()
-        await show_warranties(message)
+        await show_warranties(message, page=1)
     except ValueError:
-        await message.answer("❌ Введите целое положительное число")
+        await message.answer("❌ Введите положительное число")
 
 # Список гарантий
 @dp.message(Command("list"))
 async def cmd_list(message: Message):
-    await show_warranties(message)
+    await show_warranties(message, page=1)
 
-async def show_warranties(message: Message):
-    user_id = message.from_user.id
+async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_mode: bool = False):
+    user_id = message.from_user.id if isinstance(message, Message) else message.message.chat.id
     today = datetime.now().date()
     
     with sqlite3.connect('warranty.db') as conn:
@@ -248,58 +286,66 @@ async def show_warranties(message: Message):
         warranties = cursor.fetchall()
     
     if not warranties:
-        await message.answer("ℹ️ У вас нет сохраненных наименований")
+        text = "ℹ️ У вас нет сохраненных наименований"
+        if isinstance(message, Message):
+            await message.answer(text)
+        else:
+            await message.message.edit_text(text)
         return
     
-    text = "📋 Ваш список:\n\n"
-    for warranty in warranties:
+    # Пагинация
+    total_items = len(warranties)
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = min(start_idx + ITEMS_PER_PAGE, total_items)
+    
+    text = f"📋 Ваш список (страница {page}/{total_pages}):\n\n"
+    for warranty in warranties[start_idx:end_idx]:
         id_, brand, start_date, duration = warranty
         end_date = datetime.strptime(start_date, "%Y-%m-%d").date() + timedelta(days=duration)
         days_left = (end_date - today).days
         
-        # status = "🟢" if days_left >= 0 else "🔴"
         phrase = f"✅ Активно (осталось {days_left} дней)" if days_left >= 0 else f"❌ Истекло ({abs(days_left)} дней назад)"
         text += (
             f"Наименование: <b>{brand}</b>\n"
-            # f"ID: {id_} | До: {end_date} ({abs(days_left)} дн.)\n\n"
             f"Начало: {start_date}\n"
             f"Окончание: {end_date}\n"
             f"Статус: {phrase}\n\n"
         )
     
-    await message.answer(text, parse_mode="HTML")
+    builder = InlineKeyboardBuilder()
+    
+    if edit_mode:
+        for warranty in warranties[start_idx:end_idx]:
+            id_, brand, start_date, duration = warranty
+            end_date = datetime.strptime(start_date, "%Y-%m-%d").date() + timedelta(days=duration)
+            days_left = (end_date - today).days
+            phrase = f"✅" if days_left >= 0 else f"❌"
+            builder.button(text=f"✏️ {phrase} {brand} ({start_date} - {end_date})", callback_data=f"edit_{id_}")
+    else:
+        if page > 1:
+            builder.button(text="⬅️ Назад", callback_data=f"page_{page-1}")
+        if page < total_pages:
+            builder.button(text="Вперед ➡️", callback_data=f"page_{page+1}")
+    
+    builder.adjust(1)
+    
+    if isinstance(message, Message):
+        await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+    else:
+        await message.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("page_"))
+async def process_page(callback: CallbackQuery):
+    page = int(callback.data.split("_")[1])
+    await show_warranties(callback, page=page)
+    await callback.answer()
 
 # Удаление гарантии
 @dp.message(Command("delete"))
 async def cmd_delete(message: Message):
-    user_id = message.from_user.id
-    
-    with sqlite3.connect('warranty.db') as conn:
-        cursor = conn.execute(
-            "SELECT id, brand, start_date, duration_days FROM warranties WHERE user_id = ?",
-            (user_id,)
-        )
-        warranties = cursor.fetchall()
-    
-    if not warranties:
-        await message.answer("ℹ️ Нет наименований для удаления")
-        return
-    
-    today = datetime.now().date()
-    builder = InlineKeyboardBuilder()
-    for id_, brand, start_date, duration in warranties:
-        end_date = datetime.strptime(start_date, "%Y-%m-%d").date() + timedelta(days=duration)
-        days_left = (end_date - today).days
-        phrase = f"✅" if days_left >= 0 else f"❌"
-        builder.button(text=f"🗑️ {phrase} {brand} ({start_date} - {end_date})", callback_data=f"delete_{id_}")
-    
-    builder.adjust(1)
-    await message.answer(
-        "Выберите наименование для удаления:",
-        reply_markup=builder.as_markup()
-    )
+    await show_warranties(message, page=1, delete_mode=True)
 
-# Обработчик кнопок удаления
 @dp.callback_query(F.data.startswith("delete_"))
 async def process_delete(callback: CallbackQuery):
     warranty_id = callback.data.split("_")[1]
@@ -310,13 +356,12 @@ async def process_delete(callback: CallbackQuery):
     await callback.message.edit_text(f"✅ Наименование удалено!")
     await callback.answer()
 
-
 # Проверка просроченных гарантий
 async def check_expired_warranties():
     today = datetime.now().date()
     
     with sqlite3.connect('warranty.db') as conn:
-        cursor = conn.execute('''
+        cursor = conn.execute(''
             SELECT id, user_id, brand FROM warranties 
             WHERE date(start_date, '+' || duration_days || ' days') < ? 
             AND notified = FALSE
