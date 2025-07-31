@@ -274,7 +274,7 @@ async def process_edit_duration(message: Message, state: FSMContext):
 async def cmd_list(message: Message):
     await show_warranties(message, page=1)
 
-async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_mode: bool = False):
+async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_mode: bool = False, delete_mode: bool = False):
     user_id = message.from_user.id if isinstance(message, Message) else message.message.chat.id
     today = datetime.now().date()
     
@@ -315,7 +315,14 @@ async def show_warranties(message: Message | CallbackQuery, page: int = 1, edit_
     
     builder = InlineKeyboardBuilder()
     
-    if edit_mode:
+    if delete_mode:
+        for warranty in warranties[start_idx:end_idx]:
+            id_, brand, start_date, duration = warranty
+            builder.button(
+                text=f"🗑️ {brand}",
+                callback_data=f"confirm_delete_{id_}"
+            )
+    elif edit_mode:
         for warranty in warranties[start_idx:end_idx]:
             id_, brand, start_date, duration = warranty
             end_date = datetime.strptime(start_date, "%Y-%m-%d").date() + timedelta(days=duration)
@@ -346,6 +353,26 @@ async def process_page(callback: CallbackQuery):
 async def cmd_delete(message: Message):
     await show_warranties(message, page=1, delete_mode=True)
 
+@dp.callback_query(F.data.startswith("confirm_delete_"))
+async def confirm_delete(callback: CallbackQuery):
+    warranty_id = callback.data.split("_")[2]
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить", callback_data=f"delete_{warranty_id}")
+    builder.button(text="❌ Нет, отмена", callback_data="cancel_delete")
+    builder.adjust(2)
+    
+    await callback.message.edit_text(
+        "Вы уверены, что хотите удалить это наименование?",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "cancel_delete")
+async def cancel_delete(callback: CallbackQuery):
+    await callback.message.edit_text("❌ Удаление отменено")
+    await callback.answer()
+
 @dp.callback_query(F.data.startswith("delete_"))
 async def process_delete(callback: CallbackQuery):
     warranty_id = callback.data.split("_")[1]
@@ -353,7 +380,7 @@ async def process_delete(callback: CallbackQuery):
     with sqlite3.connect('warranty.db') as conn:
         conn.execute("DELETE FROM warranties WHERE id = ?", (warranty_id,))
     
-    await callback.message.edit_text(f"✅ Наименование удалено!")
+    await callback.message.edit_text("✅ Наименование удалено!")
     await callback.answer()
 
 # Проверка просроченных гарантий
@@ -361,7 +388,7 @@ async def check_expired_warranties():
     today = datetime.now().date()
     
     with sqlite3.connect('warranty.db') as conn:
-        cursor = conn.execute(''
+        cursor = conn.execute('''
             SELECT id, user_id, brand FROM warranties 
             WHERE date(start_date, '+' || duration_days || ' days') < ? 
             AND notified = FALSE
