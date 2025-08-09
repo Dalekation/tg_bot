@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 config = dotenv_values(".env")
 
 # Инициализация бота
-bot = Bot(token='8185292156:AAFuBcRVGiZDYBI7XdEcYnc5raGS8hjUFJA')
+bot = Bot(token=config["TOKEN"])
 dp = Dispatcher()
 
 # Константы для пагинации
