@@ -28,7 +28,7 @@ API_TOKENS = {
         "requests_remaining": 80,
         "total_requests": 80,
         "budget": 4000000,  # Бюджет на скидки для этого токена
-        "budget_remaining": 100,
+        "budget_remaining": 4000000,
         "settings": {
             "min_users_per_group": 8000,
             "max_users_per_group": 12000,
@@ -44,10 +44,10 @@ API_TOKENS = {
     },
     "never_gonna_give_you_up": {
         "name": "Никита-Никита-Никита-Анна-Анастасия",
-        "requests_remaining": 8000,
-        "total_requests": 12000,
+        "requests_remaining": 80,
+        "total_requests": 80,
         "budget": 4000000,  # Бюджет на скидки для этого токена
-        "budget_remaining": 100,
+        "budget_remaining": 4000000,
         "settings": {
             "min_users_per_group": 8000,
             "max_users_per_group": 12000,
@@ -606,13 +606,13 @@ async def root():
         "docs": "/docs",
         "endpoints": {
             "POST /simulate": "Запуск симуляции для двух групп",
-            "POST /optimize/budget": "Оптимизация скидок с учётом бюджета для указанного токена",
+            # "POST /optimize/budget": "Оптимизация скидок с учётом бюджета для указанного токена",
             "GET /prices": "Получение базовых цен",
-            "GET /token/info": "Информация о текущем токене",
-            "GET /token/settings": "Настройки текущего токена",
-            "POST /token/create": "Создание нового токена (admin only)",
-            "PUT /token/settings": "Обновление настроек токена (admin only)",
-            "PUT /token/budget": "Обновление бюджета токена (admin only)"
+            "GET /token/info": "Информация о текущем токене"
+            # "GET /token/settings": "Настройки текущего токена",
+            # "POST /token/create": "Создание нового токена (admin only)",
+            # "PUT /token/settings": "Обновление настроек токена (admin only)",
+            # "PUT /token/budget": "Обновление бюджета токена (admin only)"
         }
     }
 
@@ -652,9 +652,9 @@ async def get_token_info(
         token_name=token_info["name"],
         requests_remaining=token_info["requests_remaining"],
         total_requests=token_info["total_requests"],
-        budget=token_info.get("budget", 5000),
-        is_valid=True,
-        settings=token_info.get("settings", {})
+        budget=token_info.get("budget_remaining", 5000),
+        is_valid=True
+        # settings=token_info.get("settings", {})
     )
 
 
@@ -671,8 +671,8 @@ async def get_token_settings_endpoint(
         name=token_info["name"],
         requests_remaining=token_info["requests_remaining"],
         total_requests=token_info["total_requests"],
-        budget=token_info.get("budget", 5000),
-        settings=token_info.get("settings", {})
+        budget=token_info.get("budget_remaining", 5000)
+        # settings=token_info.get("settings", {})
     )
 
 
@@ -839,9 +839,9 @@ async def simulate(
                 behavior_dist[key] /= total
         
         # Устанавливаем seed если указан
-        if request.seed is not None:
-            random.seed(request.seed)
-            np.random.seed(request.seed)
+        # if request.seed is not None:
+        #     random.seed(request.seed)
+        #     np.random.seed(request.seed)
         
         # Генерируем случайное количество пользователей для каждой группы
         user_count1 = random.randint(min_users, max_users)
@@ -970,9 +970,9 @@ async def optimize_with_budget(
         }
         
         # Устанавливаем seed
-        if request.seed is not None:
-            np.random.seed(request.seed)
-            random.seed(request.seed)
+        # if request.seed is not None:
+        #     np.random.seed(request.seed)
+        #     random.seed(request.seed)
         
         # Генерируем или используем заданное количество пользователей
         user_count1 = request.group1_users if request.group1_users else random.randint(min_users, max_users)
