@@ -17,77 +17,13 @@ from datetime import datetime
 from pathlib import Path
 
 
-# ========== НАСТРОЙКИ ЛОГИРОВАНИЯ ==========
 
-LOG_DIR = "simulation_logs"
-LOG_FILE = os.path.join(LOG_DIR, "simulation_history.csv")
-
-# Создаём директорию для логов если её нет
-os.makedirs(LOG_DIR, exist_ok=True)
-
-# Создаём файл с заголовками если его нет
-if not os.path.exists(LOG_FILE):
-    with open(LOG_FILE, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            'timestamp', 'token_name', 'token_masked',
-            'discount1_g1', 'discount2_g1', 'user_count1',
-            'discount1_g2', 'discount2_g2', 'user_count2',
-            'seed', 'no_order_total', 'provider1_total', 'provider2_total',
-            'no_order_g1', 'provider1_g1', 'provider2_g1',
-            'no_order_g2', 'provider1_g2', 'provider2_g2'
-        ])
-
-def log_simulation_to_csv(token_info: Dict, request: SimulationRequest, 
-                          results1: Dict, results2: Dict, 
-                          user_count1: int, user_count2: int):
-    """
-    Записывает результаты симуляции в CSV файл
-    """
-    try:
-        # Маскируем токен (показываем только первые 8 символов)
-        token_masked = request.headers.get("authorization", "").replace("Bearer ", "")[:8] + "..." if hasattr(request, 'headers') else "unknown"
-        
-        # Подготавливаем данные для записи
-        row = [
-            datetime.now().isoformat(),              # timestamp
-            token_info.get("name", "unknown"),       # token_name
-            token_masked,                            # token_masked
-            request.group1.discount1,                 # discount1_g1
-            request.group1.discount2,                 # discount2_g1
-            user_count1,                              # user_count1
-            request.group2.discount1,                 # discount1_g2
-            request.group2.discount2,                 # discount2_g2
-            user_count2,                              # user_count2
-            request.seed if request.seed else "None", # seed
-            results1['no_order'] + results2['no_order'],  # no_order_total
-            results1['provider1'] + results2['provider1'], # provider1_total
-            results1['provider2'] + results2['provider2'], # provider2_total
-            results1['no_order'],                      # no_order_g1
-            results1['provider1'],                      # provider1_g1
-            results1['provider2'],                      # provider2_g1
-            results2['no_order'],                      # no_order_g2
-            results1['provider1'],                      # provider1_g2 (исправлено: было provider1_g1)
-            results2['provider2']                       # provider2_g2
-        ]
-        
-        # Исправляем опечатку в индексах
-        row[17] = results2['provider1']  # provider1_g2
-        row[18] = results2['provider2']  # provider2_g2
-        
-        # Записываем в CSV
-        with open(LOG_FILE, mode='a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(row)
-            
-    except Exception as e:
-        print(f"Ошибка при записи в лог: {e}")
 
 # ========== КОНФИГУРАЦИЯ ==========
 
 # Токены доступа и их параметры
 API_TOKENS = {
-    "": {
+    "take_on_me_take_me_on": {
         "name": "Руслан+Алена+Дарья+Ярослав+Илья",
         "requests_remaining": 80,
         "total_requests": 80,
@@ -106,7 +42,7 @@ API_TOKENS = {
             "reliability": {"provider1": 0.9, "provider2": 0.7}
         }
     },
-    "": {
+    "never_gonna_give_you_up": {
         "name": "Никита-Никита-Никита-Анна-Анастасия",
         "requests_remaining": 8000,
         "total_requests": 12000,
@@ -125,7 +61,7 @@ API_TOKENS = {
             "reliability": {"provider1": 0.85, "provider2": 0.75}
         }
     },
-    "": {
+    "admin_token_789": {
         "name": "Администратор",
         "requests_remaining": 1000,
         "budget_remaining": 50000,
@@ -276,6 +212,71 @@ class OptimizationScenario(BaseModel):
     discount_cost: float
     roi: float
 
+# ========== НАСТРОЙКИ ЛОГИРОВАНИЯ ==========
+
+LOG_DIR = "simulation_logs"
+LOG_FILE = os.path.join(LOG_DIR, "simulation_history.csv")
+
+# Создаём директорию для логов если её нет
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# Создаём файл с заголовками если его нет
+if not os.path.exists(LOG_FILE):
+    with open(LOG_FILE, mode='w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            'timestamp', 'token_name', 'token_masked',
+            'discount1_g1', 'discount2_g1', 'user_count1',
+            'discount1_g2', 'discount2_g2', 'user_count2',
+            'seed', 'no_order_total', 'provider1_total', 'provider2_total',
+            'no_order_g1', 'provider1_g1', 'provider2_g1',
+            'no_order_g2', 'provider1_g2', 'provider2_g2'
+        ])
+
+def log_simulation_to_csv(token_info: Dict, request: SimulationRequest, 
+                          results1: Dict, results2: Dict, 
+                          user_count1: int, user_count2: int):
+    """
+    Записывает результаты симуляции в CSV файл
+    """
+    try:
+        # Маскируем токен (показываем только первые 8 символов)
+        token_masked = request.headers.get("authorization", "").replace("Bearer ", "")[:8] + "..." if hasattr(request, 'headers') else "unknown"
+        
+        # Подготавливаем данные для записи
+        row = [
+            datetime.now().isoformat(),              # timestamp
+            token_info.get("name", "unknown"),       # token_name
+            token_masked,                            # token_masked
+            request.group1.discount1,                 # discount1_g1
+            request.group1.discount2,                 # discount2_g1
+            user_count1,                              # user_count1
+            request.group2.discount1,                 # discount1_g2
+            request.group2.discount2,                 # discount2_g2
+            user_count2,                              # user_count2
+            request.seed if request.seed else "None", # seed
+            results1['no_order'] + results2['no_order'],  # no_order_total
+            results1['provider1'] + results2['provider1'], # provider1_total
+            results1['provider2'] + results2['provider2'], # provider2_total
+            results1['no_order'],                      # no_order_g1
+            results1['provider1'],                      # provider1_g1
+            results1['provider2'],                      # provider2_g1
+            results2['no_order'],                      # no_order_g2
+            results1['provider1'],                      # provider1_g2 (исправлено: было provider1_g1)
+            results2['provider2']                       # provider2_g2
+        ]
+        
+        # Исправляем опечатку в индексах
+        row[17] = results2['provider1']  # provider1_g2
+        row[18] = results2['provider2']  # provider2_g2
+        
+        # Записываем в CSV
+        with open(LOG_FILE, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
+            
+    except Exception as e:
+        print(f"Ошибка при записи в лог: {e}")
 
 # ========== АУТЕНТИФИКАЦИЯ ==========
 
